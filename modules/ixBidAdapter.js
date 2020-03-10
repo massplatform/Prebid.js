@@ -18,6 +18,8 @@ const PRICE_TO_DOLLAR_FACTOR = {
   JPY: 1
 };
 
+const bidRequests = {};
+
 /**
  * Transform valid bid request config object to banner impression object that will be sent to ad server.
  *
@@ -81,6 +83,8 @@ function bidToImp(bid) {
     imp.bidfloor = bid.params.bidFloor;
     imp.bidfloorcur = bid.params.bidFloorCur;
   }
+
+  bidRequests[bid.bidId] = bid;
 
   return imp;
 }
@@ -325,6 +329,32 @@ function buildRequest(validBidRequests, bidderRequest, impressions, version) {
   };
 }
 
+/**
+ * Initialize MASS.
+ *
+ * @param  {object} input An object containing input parameters for MASS.
+ * @return {void}
+ *
+ */
+function MASSInit(input) {
+  const ns = window.MASS = window.MASS || {};
+
+  ns.bootloader = ns.bootloader || {queue: []};
+  ns.bootloader.queue.push(input);
+
+  if (!ns.bootloader.loaded) {
+    const s = document.createElement('script');
+    s.type = 'text/javascript';
+    s.async = true;
+    s.src = 'https://cdn.massplatform.net/v1/bootloader.js';
+
+    const x = document.getElementsByTagName('script')[0];
+    x.parentNode.insertBefore(s, x);
+
+    ns.bootloader.loaded = true;
+  }
+}
+
 export const spec = {
 
   code: BIDDER_CODE,
@@ -423,6 +453,7 @@ export const spec = {
   interpretResponse: function (serverResponse, bidderRequest) {
     const bids = [];
     let bid = null;
+    const massBids = {};
 
     if (!serverResponse.hasOwnProperty('body') || !serverResponse.body.hasOwnProperty('seatbid')) {
       return bids;
@@ -442,8 +473,38 @@ export const spec = {
       for (let j = 0; j < innerBids.length; j++) {
         const bidRequest = getBidRequest(innerBids[j].impid, requestBid.imp);
         bid = parseBid(innerBids[j], responseBody.cur, bidRequest);
+
+        // process MASS bids:
+        if (String(bid.dealId).match(/^#MASS/)) {
+          // this information will be sent to MASS in case this bid is selected
+          // as winner:
+          massBids[bid.requestId] = {
+            type: 'prebid',
+            bidRequest: bidRequests[bid.requestId],
+            bidResponse: bid,
+            adm: bid.ad,
+            // only needed during testing/development phase (for debugging):
+            serverResponse: serverResponse
+          };
+
+          bid.ad = '<script>window.top.postMessage({massBidId: "' + bid.requestId + '"}, "*");\x3c/script>';
+        }
+
         bids.push(bid);
       }
+    }
+
+    if (Object.keys(massBids).length) {
+      window.addEventListener('message', function(e) {
+        if (!e || !e.data || !e.data.massBidId) {
+          return;
+        }
+
+        const bid = massBids[e.data.massBidId];
+        bid.e = e;
+
+        MASSInit(bid);
+      });
     }
 
     return bids;
