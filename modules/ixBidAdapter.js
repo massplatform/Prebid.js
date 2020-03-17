@@ -475,7 +475,7 @@ export const spec = {
         bid = parseBid(innerBids[j], responseBody.cur, bidRequest);
 
         // process MASS bids:
-        if (String(bid.dealId).match(/^#MASS/)) {
+        if (utils.deepAccess(bidRequests[bid.requestId], 'params.mass') || String(bid.dealId).match(/^#MASS/)) {
           // this information will be sent to MASS in case this bid is selected
           // as winner:
           massBids[bid.requestId] = {
